@@ -1,5 +1,5 @@
 // CBT Test Studio — AI backend (Gemini)
-// Handles: Extract questions from PDF, Generate MCQs from notes, AI chat
+// Modes: extract (strict PDF questions) | notes (generate from concepts) | ai (PYQ-style practice)
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -17,54 +17,78 @@ module.exports = async (req, res) => {
 
   const key = (process.env.GEMINI_API_KEY || '').trim();
   if (!key) {
-    return reply('Setup problem: Vercel mein GEMINI_API_KEY nahi mili. Settings > Environment Variables mein add karke Redeploy karo.');
+    return reply('Setup problem: Vercel mein GEMINI_API_KEY nahi mili.');
   }
 
   const isCBT = context && context.source === 'cbt-test-studio';
-  const isNotesMode = isCBT && context.mode === 'notes';
-  const isExtractMode = isCBT && context.mode === 'extract';
+  const mode = (context && context.mode) || 'ai'; // 'extract' | 'notes' | 'ai'
 
   let system;
-  if (isExtractMode) {
-    system = 
-      'You are a question EXTRACTOR (NOT generator). Extract ONLY the questions literally present in the given text.\n\n' +
-      'STRICT RULES:\n' +
-      '1. DO NOT generate new questions. DO NOT paraphrase. Copy questions EXACTLY as written in the source.\n' +
-      '2. If the text has MCQ with options (A)(B)(C)(D) or (1)(2)(3)(4), copy them exactly with their options.\n' +
-      '3. If the text has assertion-reason, match-the-following, sequence-based, or case-based questions, keep the ORIGINAL content but format as 4-option MCQ.\n' +
-      '4. If the text has questions with diagrams/figures, describe the diagram in the question text (like "Refer to the figure showing..." or "As shown in the diagram...").\n' +
-      '5. If NO questions are found in the text (only theory/notes/answer key), return [] — empty array. DO NOT invent.\n' +
-      '6. Extract ALL questions found, up to the requested count.\n' +
-      '7. 4 options per question, only ONE correct. Preserve the original answer if given (A/B/C/D → 0/1/2/3).\n' +
-      '8. "topic" = chapter/section name from text.\n' +
-      '9. "diff" = easy/medium/hard based on question difficulty.\n' +
-      '10. "explain" = brief 1-sentence explanation ONLY if provided in source, otherwise leave empty string.\n\n' +
-      'IMPORTANT: Reply with ONLY a strict JSON array. No prose, no markdown, no code fences.\n' +
-      'Format:\n' +
-      '[{"q":"question text","options":["A","B","C","D"],"ans":0,"topic":"chapter","diff":"easy","explain":""}]\n\n' +
+
+  if (mode === 'extract') {
+    // STRICT EXTRACTION - no invention
+    system =
+      'You are a question EXTRACTOR for a CBT test app. Your ONLY job is to extract questions that EXIST in the given text.\n\n' +
+      'ABSOLUTE RULES:\n' +
+      '1. ONLY extract questions literally present in the source text. NEVER invent new questions.\n' +
+      '2. NEVER paraphrase or reword. Copy the question text EXACTLY as written.\n' +
+      '3. If text contains MCQ with options (A)(B)(C)(D) or (1)(2)(3)(4), copy them EXACTLY.\n' +
+      '4. If text contains assertion-reason, match-the-following, sequence, or case-based questions, keep the ORIGINAL content but format as 4-option MCQ (add plausible options if the source gives them).\n' +
+      '5. If a question references a diagram/figure/table, include that reference in the question text (e.g., "Refer to the given figure showing..." as it appears in source).\n' +
+      '6. If NO questions are found (only theory, notes, answer keys, marks schemes, OMR sheets), return [].\n' +
+      '7. Do NOT create questions from theory paragraphs.\n' +
+      '8. Do NOT add general knowledge or syllabus-based questions.\n' +
+      '9. Extract ALL questions you can find (up to the requested count).\n' +
+      '10. "topic" = chapter/section heading from the source text.\n' +
+      '11. "diff" = easy/medium/hard based on question complexity.\n' +
+      '12. "explain" = ONLY if the source provides an explanation, otherwise empty string "".\n\n' +
+      'Reply with ONLY a JSON array. No prose, no markdown.\n' +
+      'Format: [{"q":"...","options":["A","B","C","D"],"ans":0,"topic":"ch","diff":"easy","explain":""}]\n\n' +
       'USER REQUEST:\n' + JSON.stringify(context || {});
-  } else if (isNotesMode) {
-    system = 
-      'You are an expert exam question generator. The user has provided NOTES/THEORY text.\n' +
-      'Generate high-quality multiple-choice questions based on the CONCEPTS in the notes.\n\n' +
+  } else if (mode === 'notes') {
+    // Generate from notes - PYQ-style
+    system =
+      'You are an expert Indian exam question setter. Generate MCQs based on the CONCEPTS in the given notes.\n\n' +
+      'Generate questions that match the STYLE and PATTERN of popular Indian exam prep books — Oswaal, Arihant, MTG, Disha. ' +
+      'Use the NCERT syllabus pattern. Include numerical values, definitions, conceptual traps commonly seen in these books.\n\n' +
       'RULES:\n' +
-      '1. Generate questions that test understanding of concepts from the notes.\n' +
-      '2. Each question must have 4 options, only ONE correct.\n' +
-      '3. Vary the correct option index (0,1,2,3).\n' +
+      '1. Each question has 4 options, only ONE correct.\n' +
+      '2. Vary the correct answer index (0,1,2,3).\n' +
+      '3. Plausible distractors — like real exam options.\n' +
       '4. "topic" = concept/chapter name from notes.\n' +
-      '5. "explain" = short 1-2 sentence explanation.\n' +
-      '6. Cover different topics from the notes.\n' +
-      '7. Plausible distractors.\n' +
-      '8. No markdown, raw JSON only.\n\n' +
-      'IMPORTANT: Reply with ONLY a strict JSON array.\n' +
-      'Format:\n' +
-      '[{"q":"question text","options":["A","B","C","D"],"ans":0,"topic":"topic","diff":"easy","explain":"why"}]\n\n' +
+      '5. "diff" = easy/medium/hard.\n' +
+      '6. "explain" = 1-2 sentence explanation.\n' +
+      '7. Cover different concepts from the notes.\n' +
+      '8. Match Oswaal/Arihant difficulty level.\n\n' +
+      'Reply with ONLY a JSON array. No markdown.\n' +
+      'Format: [{"q":"...","options":["A","B","C","D"],"ans":0,"topic":"topic","diff":"easy","explain":"why"}]\n\n' +
       'USER REQUEST:\n' + JSON.stringify(context || {});
   } else {
-    system = 
-      'You are an AI assistant. Answer the user\'s question helpfully and concisely.\n' +
-      'Reply in the same language the user writes in (Hinglish is fine).\n\n' +
-      'CONTEXT:\n' + JSON.stringify(context || {});
+    // AI Practice mode - PYQ-style generation
+    system =
+      'You are an expert Indian competitive-exam question setter with 20 years of experience.\n\n' +
+      'Generate high-quality MCQs that match the EXACT style, difficulty, and pattern of popular PYQ books used by lakhs of Indian students:\n' +
+      '- Oswaal Question Banks\n' +
+      '- Arihant Series\n' +
+      '- MTG Publications\n' +
+      '- Disha Experts\n\n' +
+      'PATTERN REQUIREMENTS:\n' +
+      '1. Recent exam pattern (last 5 years trend).\n' +
+      '2. NCERT-based concepts.\n' +
+      '3. Common trap patterns used in these books.\n' +
+      '4. Numerical values typical to exam.\n' +
+      '5. Mix of factual, conceptual, and application questions.\n' +
+      '6. Difficulty distribution matching real exams.\n\n' +
+      'RULES:\n' +
+      '- 4 options per question, ONE correct.\n' +
+      '- Vary correct option index (0,1,2,3).\n' +
+      '- Plausible distractors.\n' +
+      '- "topic" = exact chapter name.\n' +
+      '- "diff" = easy/medium/hard.\n' +
+      '- "explain" = short 1-2 sentence.\n\n' +
+      'Reply with ONLY a JSON array. No markdown.\n' +
+      'Format: [{"q":"...","options":["A","B","C","D"],"ans":0,"topic":"ch","diff":"easy","explain":"why"}]\n\n' +
+      'USER REQUEST:\n' + JSON.stringify(context || {});
   }
 
   let msgs = (Array.isArray(history) ? history : [])
@@ -90,6 +114,10 @@ module.exports = async (req, res) => {
 
   for (const model of models) {
     try {
+      // Extract mode: low temperature for accuracy
+      // Other modes: higher temperature for variety
+      const temp = mode === 'extract' ? 0.3 : 0.9;
+
       const r = await fetch(
         'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent',
         {
@@ -100,7 +128,7 @@ module.exports = async (req, res) => {
             contents,
             generationConfig: {
               maxOutputTokens: isCBT ? 16384 : 2048,
-              temperature: isExtractMode ? 0.4 : (isCBT ? 0.85 : 1.0),
+              temperature: temp,
               ...(isCBT ? { responseMimeType: 'application/json' } : {})
             }
           })
@@ -121,7 +149,7 @@ module.exports = async (req, res) => {
       console.error('Gemini error', lastErr);
 
       if (r.status === 401 || r.status === 403 || (r.status === 400 && /api key/i.test(msg))) {
-        return reply('API key problem: ' + msg + '. Check GEMINI_API_KEY in Vercel.');
+        return reply('API key problem: ' + msg);
       }
       if (r.status === 429) sawQuota = true;
     } catch (e) {

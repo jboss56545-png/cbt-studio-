@@ -1,120 +1,138 @@
-// CBT Test Studio — AI backend (Gemini)
-module.exports = async (req, res) => {
+// api/ai-coach.js — Vercel Serverless Function using Google Gemini API
+// Requires env var: GEMINI_API_KEY  (optional: GEMINI_MODEL)
+
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
-  const reply = (text) => res.status(200).json({ message: text });
-  const { message, context, history } = req.body || {};
-  if (!message || typeof message !== 'string' || message.length > 80000) {
-    return res.status(400).json({ error: 'Bad message' });
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') {
+    return res.status(405).json({ message: 'Method not allowed. Use POST.' });
   }
 
-  const key = (process.env.GEMINI_API_KEY || '').trim();
-  if (!key) return reply('Setup: GEMINI_API_KEY missing on Vercel.');
-
-  const isCBT = context && context.source === 'cbt-test-studio';
-  const mode = (context && context.mode) || 'ai';
-
-  let system;
-  if (mode === 'extract') {
-    system = 'You are a question EXTRACTOR. Extract ONLY questions from the given text. ' +
-      'DO NOT invent. DO NOT paraphrase. Copy EXACTLY. ' +
-      'If MCQ with (A)(B)(C)(D) or (1)(2)(3)(4), copy exactly. ' +
-      'If assertion-reason/match/sequence, keep original as 4-option MCQ. ' +
-      'Include diagram references in question text if present. ' +
-      'If NO questions in text, return []. ' +
-      'Extract ALL questions up to requested count. ' +
-      'Reply with ONLY a JSON array. Format: ' +
-      '[{"q":"question","options":["A","B","C","D"],"ans":0,"topic":"ch","diff":"easy","explain":""}]';
-  } else if (mode === 'notes') {
-    system = 'You are an expert Indian exam question setter. Generate MCQs from concepts in the notes. ' +
-      'Match Oswaal/Arihant/MTG style and difficulty. ' +
-      'Reply with ONLY a JSON array. Format: ' +
-      '[{"q":"question","options":["A","B","C","D"],"ans":0,"topic":"topic","diff":"easy","explain":"why"}]';
-  } else {
-    system = 'You are an expert Indian competitive-exam question setter. ' +
-      'Generate MCQs matching Oswaal/Arihant/MTG pattern and difficulty. ' +
-      'Reply with ONLY a JSON array. Format: ' +
-      '[{"q":"question","options":["A","B","C","D"],"ans":0,"topic":"ch","diff":"easy","explain":"why"}]';
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({
+      message: 'GEMINI_API_KEY is not set on the server.',
+      detail: 'Add it in Vercel → Project → Settings → Environment Variables.'
+    });
   }
 
-  let msgs = (Array.isArray(history) ? history : [])
-    .slice(-10)
-    .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content);
-  while (msgs.length && msgs[0].role !== 'user') msgs.shift();
-  if (!msgs.length) msgs = [{ role: 'user', content: message }];
+  let body = req.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); }
+    catch (e) { return res.status(400).json({ message: 'Invalid JSON body.' }); }
+  }
+  if (!body || typeof body !== 'object') {
+    return res.status(400).json({ message: 'Missing request body.' });
+  }
 
-  const contents = msgs.map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }]
-  }));
+  const message = String(body.message || '').trim();
+  const history = Array.isArray(body.history) ? body.history : [];
 
-  const models = [
-    (process.env.GEMINI_MODEL || '').trim(),
-    'gemini-2.0-flash',
-    'gemini-2.5-flash',
-    'gemini-2.5-flash-lite'
-  ].filter((m, i, a) => m && a.indexOf(m) === i);
+  let images = [];
+  if (Array.isArray(body.images)) images = body.images;
+  else if (body.image) images = [body.image];
 
-  let lastErr = '';
-  let sawQuota = false;
+  if (!message && images.length === 0) {
+    return res.status(400).json({ message: 'Provide a message and/or an image.' });
+  }
 
-  for (const model of models) {
-    try {
-      const temp = mode === 'extract' ? 0.2 : 0.9;
-      const r = await fetch(
-        'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: system }] },
-            contents,
-            generationConfig: {
-              maxOutputTokens: 16384,
-              temperature: temp,
-              responseMimeType: 'application/json'
-            }
-          })
-        }
-      );
-      const data = await r.json().catch(() => ({}));
+  const parts = [];
+  if (message) parts.push({ text: message });
 
-      if (r.ok) {
-        const parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
-        let text = parts ? parts.map(p => p.text || '').join('').trim() : '';
-        if (text) {
-          text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
-          const firstBracket = text.indexOf('[');
-          const lastBracket = text.lastIndexOf(']');
-          if (firstBracket >= 0 && lastBracket > firstBracket) {
-            text = text.slice(firstBracket, lastBracket + 1);
-          }
-          return reply(text);
-        }
-        lastErr = '[' + model + '] Empty response';
-        continue;
+  for (const img of images) {
+    if (!img || !img.data) continue;
+    let raw = String(img.data);
+    const comma = raw.indexOf(',');
+    if (raw.startsWith('data:') && comma > -1) raw = raw.slice(comma + 1);
+    parts.push({
+      inline_data: {
+        mime_type: img.mime || img.mimeType || 'image/jpeg',
+        data: raw
       }
+    });
+  }
 
-      const msg = (data.error && data.error.message) || ('HTTP ' + r.status);
-      lastErr = '[' + model + '] ' + r.status + ': ' + msg;
-      console.error('Gemini error', lastErr);
+  const SYSTEM_INSTRUCTION = [
+    'You are an expert exam question-setter and MCQ extractor for Indian competitive exams',
+    '(CUET, JEE, NEET, NDA, SSC, UPSC, CBSE Boards).',
+    'Always obey the user instructions exactly. When the user asks for JSON,',
+    'reply with ONLY valid JSON — no markdown, no code fences, no prose.'
+  ].join(' ');
 
-      if (r.status === 401 || r.status === 403 || (r.status === 400 && /api key/i.test(msg))) {
-        return reply('API key problem: ' + msg);
-      }
-      if (r.status === 429) sawQuota = true;
-    } catch (e) {
-      lastErr = '[' + model + '] ' + (e && e.message ? e.message : 'network error');
-      console.error(lastErr);
+  const contents = [];
+  for (const h of history) {
+    if (!h || !h.content) continue;
+    const role = (h.role === 'assistant' || h.role === 'model') ? 'model' : 'user';
+    contents.push({ role, parts: [{ text: String(h.content) }] });
+  }
+  contents.push({ role: 'user', parts });
+
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const url =
+    'https://generativelanguage.googleapis.com/v1beta/models/' +
+    encodeURIComponent(model) +
+    ':generateContent?key=' +
+    encodeURIComponent(apiKey);
+
+  const payload = {
+    systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+    contents,
+    generationConfig: {
+      temperature: 0.9,
+      topP: 0.95,
+      maxOutputTokens: 8192
+    },
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT',        threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH',       threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
+    ]
+  };
+
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await r.json().catch(() => ({}));
+
+    if (!r.ok) {
+      const errMsg =
+        (data && data.error && data.error.message) ||
+        ('Gemini API error ' + r.status);
+      return res.status(r.status).json({
+        message: errMsg,
+        detail: (data && data.error && data.error.status) || ''
+      });
     }
+
+    const candidate = data && data.candidates && data.candidates[0];
+    const text =
+      (candidate &&
+        candidate.content &&
+        Array.isArray(candidate.content.parts) &&
+        candidate.content.parts.map(p => p.text || '').join('')) || '';
+
+    if (!text.trim()) {
+      const reason = (candidate && candidate.finishReason) || 'unknown';
+      return res.status(502).json({
+        message: 'Empty AI response (finishReason: ' + reason + ').',
+        detail: reason === 'MAX_TOKENS'
+          ? 'Output truncated. Ask for fewer questions per request.'
+          : ''
+      });
+    }
+
+    return res.status(200).json({ message: text });
+  } catch (e) {
+    return res.status(500).json({
+      message: 'AI request failed: ' + (e && e.message ? e.message : 'unknown')
+    });
   }
-
-  if (sawQuota) return reply('Free limit poori hai. 1-2 min baad try karo.\n\nDetail: ' + lastErr);
-  return reply('AI se jawab nahi mila.\n\nDetail: ' + lastErr);
 };
-
-module.exports.config = { maxDuration: 60 };

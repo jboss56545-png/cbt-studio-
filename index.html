@@ -6,6 +6,12 @@
 <meta name="theme-color" content="#0b0d12">
 <meta name="mobile-web-app-capable" content="yes">
 <title>CBT Test Studio</title>
+
+<!-- ===== PWA SETUP ADDED ===== -->
+<link rel="manifest" href="/manifest.json" />
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<!-- =========================== -->
+
 <style>
 :root{--bg:#0b0d12;--bg-2:#0f1219;--card:#161a24;--card-2:#1c2130;--border:#252b3a;--text:#e8ecf5;--muted:#8b95ad;--accent:#6366f1;--accent-2:#a855f7;--green:#22c55e;--red:#ef4444;--purple:#a855f7;--grey:#4b5563;--orange:#f59e0b;--radius:16px;--radius-sm:10px;--shadow:0 10px 34px rgba(0,0,0,.45);--shadow-sm:0 4px 14px rgba(0,0,0,.28);--tap:44px}
 [data-theme="light"]{--bg:#f5f6fb;--bg-2:#fff;--card:#fff;--card-2:#f2f4fa;--border:#e4e7f0;--text:#0f172a;--muted:#6b7280;--grey:#cbd5e1;--shadow:0 10px 30px rgba(15,23,42,.10);--shadow-sm:0 4px 14px rgba(15,23,42,.07)}
@@ -1090,7 +1096,30 @@ function downloadResult(r){
 }
 
 /* ============ SETTINGS ============ */
-function openSettings(){var theme=LS.raw(K.THEME,'dark');var ov=document.createElement('div');ov.className='modal-overlay';var box=document.createElement('div');box.className='modal';box.innerHTML='<h3>⚙️ Settings</h3><div class="field"><label>AI Source</label><p class="muted small" style="margin:0">Uses Vercel AI endpoint (<code>/api/ai-coach</code>). No API key needed here.</p></div><div class="field"><label>Appearance</label><div class="chip-row" id="sTheme"><button type="button" class="chip'+(theme==='dark'?' active':'')+'" data-theme="dark">🌙 Dark</button><button type="button" class="chip'+(theme==='light'?' active':'')+'" data-theme="light">☀️ Light</button></div></div><div class="field"><label>Data</label><div class="btn-row"><button type="button" class="btn small danger" id="sReset">🗑 Reset all</button><button type="button" class="btn small" id="sResetSeen">↺ Clear Q history</button></div><p class="muted small" style="margin:8px 0 0" id="sStats"></p></div><div class="modal-actions"><button type="button" class="btn" id="sCancel">Close</button></div>';ov.appendChild(box);document.body.appendChild(ov);function close(){if(ov.parentNode)document.body.removeChild(ov)}function updateStats(){var seen=getSeen().length;var hist=LS.get(K.HISTORY,[]).length;box.querySelector('#sStats').textContent=seen+' questions remembered • '+hist+' tests'}updateStats();box.querySelectorAll('#sTheme .chip').forEach(function(b){b.onclick=function(){box.querySelectorAll('#sTheme .chip').forEach(function(x){x.classList.remove('active')});b.classList.add('active');applyTheme(b.dataset.theme)}});box.querySelector('#sResetSeen').onclick=function(){LS.del(K.SEEN);LS.del(K.RECENT);updateStats()};box.querySelector('#sReset').onclick=function(){dialog({title:'Reset everything?',message:'Deletes all data.',buttons:[{text:'Cancel',value:false},{text:'Reset',primary:true,danger:true,value:true}]}).then(function(ok){if(!ok)return;LS.del(K.SEEN);LS.del(K.RECENT);LS.del(K.ACTIVE);LS.del(K.HISTORY);LS.del(K.BOOKS);IDB.all().then(function(banks){var chain=Promise.resolve();banks.forEach(function(b){chain=chain.then(function(){return IDB.del(b.id)})});return chain}).then(function(){close();renderHome();showScreen('screen-home');dialog({title:'Done',message:'All data cleared.',buttons:[{text:'OK',primary:true,value:true}]})})})};box.querySelector('#sCancel').onclick=close}
+function openSettings(){
+  var theme=LS.raw(K.THEME,'dark');
+  var ov=document.createElement('div');
+  ov.className='modal-overlay';
+  var box=document.createElement('div');
+  box.className='modal';
+  
+  // ===== AI SOURCE TEXT REMOVED FROM HERE =====
+  box.innerHTML='<h3>⚙️ Settings</h3>'+
+    '<div class="field"><label>Appearance</label><div class="chip-row" id="sTheme"><button type="button" class="chip'+(theme==='dark'?' active':'')+'" data-theme="dark">🌙 Dark</button><button type="button" class="chip'+(theme==='light'?' active':'')+'" data-theme="light">☀️ Light</button></div></div>'+
+    '<div class="field"><label>Data</label><div class="btn-row"><button type="button" class="btn small danger" id="sReset">🗑 Reset all</button><button type="button" class="btn small" id="sResetSeen">↺ Clear Q history</button></div><p class="muted small" style="margin:8px 0 0" id="sStats"></p></div>'+
+    '<div class="modal-actions"><button type="button" class="btn" id="sCancel">Close</button></div>';
+  // ===========================================
+  
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+  function close(){if(ov.parentNode)document.body.removeChild(ov)}
+  function updateStats(){var seen=getSeen().length;var hist=LS.get(K.HISTORY,[]).length;box.querySelector('#sStats').textContent=seen+' questions remembered • '+hist+' tests'}
+  updateStats();
+  box.querySelectorAll('#sTheme .chip').forEach(function(b){b.onclick=function(){box.querySelectorAll('#sTheme .chip').forEach(function(x){x.classList.remove('active')});b.classList.add('active');applyTheme(b.dataset.theme)}});
+  box.querySelector('#sResetSeen').onclick=function(){LS.del(K.SEEN);LS.del(K.RECENT);updateStats()};
+  box.querySelector('#sReset').onclick=function(){dialog({title:'Reset everything?',message:'Deletes all data.',buttons:[{text:'Cancel',value:false},{text:'Reset',primary:true,danger:true,value:true}]}).then(function(ok){if(!ok)return;LS.del(K.SEEN);LS.del(K.RECENT);LS.del(K.ACTIVE);LS.del(K.HISTORY);LS.del(K.BOOKS);IDB.all().then(function(banks){var chain=Promise.resolve();banks.forEach(function(b){chain=chain.then(function(){return IDB.del(b.id)})});return chain}).then(function(){close();renderHome();showScreen('screen-home');dialog({title:'Done',message:'All data cleared.',buttons:[{text:'OK',primary:true,value:true}]})})})};
+  box.querySelector('#sCancel').onclick=close;
+}
 function applyTheme(theme){document.documentElement.setAttribute('data-theme',theme);LS.setRaw(K.THEME,theme);var meta=document.querySelector('meta[name="theme-color"]');if(meta)meta.setAttribute('content',theme==='light'?'#f5f6fb':'#0b0d12')}
 
 /* ============ WIRING ============ */
@@ -1124,6 +1153,17 @@ function wireEvents(){
   var theme=LS.raw(K.THEME,'dark');applyTheme(theme);
   wireEvents();renderHome();bindExamGrid();showScreen('screen-home');
   IDB.open().catch(function(){});
+
+  // ===== SERVICE WORKER REGISTER ADDED =====
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+      navigator.serviceWorker.register('/service-worker.js')
+        .then(function(reg) { console.log('ServiceWorker registered successfully'); })
+        .catch(function(err) { console.log('ServiceWorker registration failed: ', err); });
+    });
+  }
+  // =========================================
+
 })();
 </script>
 </body>

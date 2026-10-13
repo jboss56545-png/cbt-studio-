@@ -70,7 +70,11 @@ module.exports = async function handler(req, res) {
   }
   contents.push({ role: 'user', parts });
 
-  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  // ===== MODEL FIXED HERE =====
+  // Pehle 'gemini-3.8-flash' likha tha jo galat hai, ab 'gemini-1.5-flash' kar diya hai
+  const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+  // ============================
+
   const url =
     'https://generativelanguage.googleapis.com/v1beta/models/' +
     encodeURIComponent(model) +

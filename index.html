@@ -682,7 +682,18 @@ function handleImageUpload(file){
     });
   }).catch(function(err){
     progressWrap.classList.add('hidden');
-    dialog({title:'Image extract failed',message:err&&err.message?err.message:'Unknown error',buttons:[{text:'OK',primary:true,value:true}]});
+    dialog({
+      title: 'Image extract failed',
+      message: (err && err.message ? err.message : 'Unknown error') + '\n\nServer busy hai. Retry karein?',
+      buttons: [
+        {text: 'Cancel', value: false},
+        {text: 'Retry', primary: true, value: true}
+      ]
+    }).then(function(retry){
+      if(retry) {
+        setTimeout(function() { handleImageUpload(file); }, 2000);
+      }
+    });
   });
 }
 
